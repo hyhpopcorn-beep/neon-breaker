@@ -24,6 +24,9 @@
     .panel { padding:25px; } .panel h2 { margin:0 0 8px; color:#ffde77; text-shadow:0 0 12px #f6a637; } .panel p { margin:0 0 18px; color:#c7d4ff; }
     button { border:0; padding:12px 21px; border-radius:999px; color:#07102a; background:linear-gradient(135deg,#78ecff,#7784ff); font:800 15px inherit; cursor:pointer; box-shadow:0 5px 18px #5d84ff8c; transition:transform .15s; } button:hover { transform:translateY(-2px); }
     .help { margin:15px 0 0; color:var(--muted); font-size:13px; } kbd { padding:2px 6px; border:1px solid var(--line); border-radius:4px; color:var(--text); }
+    .ranking { width:min(100%,420px); margin:18px auto 4px; padding:14px 18px; text-align:left; border:1px solid var(--line); border-radius:12px; background:color-mix(in srgb,var(--board1) 84%,transparent); }
+    .ranking h2 { margin:0 0 8px; font-size:15px; color:var(--text); } .ranking small { color:var(--muted); font-weight:500; }
+    #rank-list { margin:0; padding-left:28px; } #rank-list li { display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid color-mix(in srgb,var(--line) 20%,transparent); font-size:14px; } #rank-list li:last-child { border:0; }
   </style>
 </head>
 <body>
@@ -32,12 +35,24 @@
     <div class="hud"><div>점수 <span id="score">0</span></div><div>스테이지 <span id="level">1</span></div><div>목숨 <span class="lives" id="lives">♥ ♥ ♥</span></div></div>
     <section class="board"><canvas id="game" width="720" height="520"></canvas><div class="overlay" id="overlay"><div class="panel"><h2 id="message">게임 시작!</h2><p id="detail">공을 놓치지 말고 모든 벽돌을 깨세요.</p><button id="start">시작하기</button></div></div></section>
     <p class="help"><kbd>←</kbd> <kbd>→</kbd> 또는 마우스/터치로 패들을 움직일 수 있어요.</p>
+    <section class="ranking" aria-label="내 기기 랭킹"><h2>🏆 내 기기 랭킹 <small>이 브라우저에만 저장돼요</small></h2><ol id="rank-list"></ol></section>
   </main>
-<script>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
+import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
+import { getDatabase, ref, push, set, query, orderByChild, limitToLast, onValue } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js';
+const firebaseApp = initializeApp({apiKey:'AIzaSyCVYe5NZlwZyH5wu5OjyBKOH80D1_-Z6Po',authDomain:'neon-breaker-web.firebaseapp.com',projectId:'neon-breaker-web',storageBucket:'neon-breaker-web.firebasestorage.app',messagingSenderId:'801864619115',appId:'1:801864619115:web:722ab80d5b8f4dfd044d2e',databaseURL:'https://neon-breaker-80049-default-rtdb.asia-southeast1.firebasedatabase.app'});
+const auth=getAuth(firebaseApp),db=getDatabase(firebaseApp);let firebaseUser=null;
+signInAnonymously(auth).then(result=>firebaseUser=result.user).catch(()=>{});
 const c=document.querySelector('#game'),x=c.getContext('2d'), overlay=document.querySelector('#overlay'); let theme='black';
 const scoreEl=document.querySelector('#score'),levelEl=document.querySelector('#level'),livesEl=document.querySelector('#lives');
 let keys={}, paddle, ball, bricks, score=0, level=1, lives=3, running=false, raf;
 const colors=['#ff6b9a','#ff9d5c','#ffe36e','#73e6ad','#6fcaff','#9f8cff'];
+const rankList=document.querySelector('#rank-list');
+function escapeHtml(value){return value.replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));}
+function getRankings(){try{return JSON.parse(localStorage.getItem('neonBreakerRankings')||'[]')}catch{return []}}
+function renderRankings(){const ranks=getRankings();rankList.innerHTML=ranks.length?ranks.map(row=>`<li><span>${escapeHtml(row.name)}</span><strong>${row.score}점</strong></li>`).join(''):'<li><span>아직 기록이 없어요.</span><strong>—</strong></li>';}
+function saveScore(){const raw=prompt('랭킹에 표시할 닉네임을 입력하세요. (최대 12글자)');if(!raw)return;const name=raw.trim().slice(0,12);if(!name)return;const ranks=getRankings();ranks.push({name,score,date:Date.now()});ranks.sort((a,b)=>b.score-a.score||a.date-b.date);try{localStorage.setItem('neonBreakerRankings',JSON.stringify(ranks.slice(0,10)));}catch{}renderRankings();}
 function setup(){ paddle={w:112,h:14,x:(c.width-112)/2,y:c.height-36,speed:8}; ball={r:8,x:c.width/2,y:c.height-55,dx:4.2*(level%2?1:-1),dy:-4.2}; const rows=Math.min(4+level,7), cols=10, gap=7, bw=(c.width-66-gap*(cols-1))/cols; bricks=[]; for(let r=0;r<rows;r++)for(let col=0;col<cols;col++) bricks.push({x:33+col*(bw+gap),y:45+r*28,w:bw,h:19,hp:r>3&&level>1?2:1,color:colors[(r+col)%colors.length]}); levelEl.textContent=level; updateHud(); }
 function updateHud(){scoreEl.textContent=score; livesEl.textContent='♥ '.repeat(lives).trim()||'—';}
 function draw(){ x.clearRect(0,0,c.width,c.height); x.fillStyle=theme==='white'?'#29457b18':'#ffffff08'; for(let i=0;i<18;i++) x.fillRect((i*71)%c.width,(i*97)%c.height,2,2); bricks.forEach(b=>{x.shadowBlur=14;x.shadowColor=b.color;x.fillStyle=b.color;x.fillRect(b.x,b.y,b.w,b.h);if(b.hp===2){x.shadowBlur=0;x.fillStyle='#ffffffaa';x.fillRect(b.x+4,b.y+4,b.w-8,2)}}); x.shadowBlur=18;x.shadowColor='#6eeaff';x.fillStyle='#7deeff';x.fillRect(paddle.x,paddle.y,paddle.w,paddle.h); x.beginPath();x.arc(ball.x,ball.y,ball.r,0,Math.PI*2);x.fillStyle=theme==='white'?'#193563':'#fff';x.shadowColor='#a3e9ff';x.shadowBlur=20;x.fill();x.shadowBlur=0; }
@@ -47,7 +62,10 @@ function collide(){ if(ball.x+ball.dx>c.width-ball.r||ball.x+ball.dx<ball.r)ball
   if(!bricks.length){level++;setup();show('스테이지 '+level,'더 빠른 공과 단단한 벽돌이 기다려요.','계속하기');running=false;}
 }
 function loop(){if(!running)return;if(keys.ArrowLeft)paddle.x-=paddle.speed;if(keys.ArrowRight)paddle.x+=paddle.speed;paddle.x=Math.max(0,Math.min(c.width-paddle.w,paddle.x));ball.x+=ball.dx;ball.y+=ball.dy;collide();draw();raf=requestAnimationFrame(loop);}
-function show(title,detail,btn){document.querySelector('#message').textContent=title;document.querySelector('#detail').textContent=detail;document.querySelector('#start').textContent=btn;overlay.hidden=false;}function end(t,d){running=false;show(t,d,'다시 하기');}
+function show(title,detail,btn){document.querySelector('#message').textContent=title;document.querySelector('#detail').textContent=detail;document.querySelector('#start').textContent=btn;overlay.hidden=false;}function end(t,d){running=false;show(t,d,'다시 하기');saveScore();}
 function start(){overlay.hidden=true;if(!running){running=true;loop();}} document.querySelector('#start').onclick=()=>{if(!lives){score=0;level=1;lives=3;setup();}start()};
-document.querySelectorAll('.theme').forEach(button=>button.addEventListener('click',()=>{theme=button.dataset.theme;document.body.classList.toggle('light',theme==='white');document.querySelectorAll('.theme').forEach(b=>b.classList.toggle('active',b===button));draw()}));addEventListener('keydown',e=>{keys[e.key]=true;if(['ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault()});addEventListener('keyup',e=>keys[e.key]=false);function move(e){let r=c.getBoundingClientRect(),p=e.clientX-r.left;p*=c.width/r.width;paddle.x=Math.max(0,Math.min(c.width-paddle.w,p-paddle.w/2));}c.addEventListener('pointermove',move);c.addEventListener('pointerdown',e=>{c.setPointerCapture?.(e.pointerId);move(e)});setup();draw();
+renderRankings=ranks=>{rankList.replaceChildren();if(!ranks.length){const item=document.createElement('li');item.textContent='아직 등록된 점수가 없어요.';rankList.append(item);return;}ranks.forEach(row=>{const item=document.createElement('li'),name=document.createElement('span'),points=document.createElement('strong');name.textContent=row.name;points.textContent=`${row.score}점`;item.append(name,points);rankList.append(item);});};
+onValue(query(ref(db,'scores'),orderByChild('score'),limitToLast(10)),snapshot=>{const rows=[];snapshot.forEach(child=>rows.push(child.val()));renderRankings(rows.reverse());},()=>renderRankings([]));
+saveScore=async()=>{const raw=prompt('랭킹에 표시할 닉네임을 입력하세요. (최대 12글자)');const name=raw?.trim().slice(0,12);if(!name)return;try{if(!firebaseUser)firebaseUser=(await signInAnonymously(auth)).user;await set(push(ref(db,'scores')),{name,score,uid:firebaseUser.uid,createdAt:Date.now()});}catch{alert('점수를 저장하지 못했어요. Firebase 익명 로그인이 켜져 있는지 확인해 주세요.');}};
+document.querySelectorAll('.theme').forEach(button=>button.addEventListener('click',()=>{theme=button.dataset.theme;document.body.classList.toggle('light',theme==='white');document.querySelectorAll('.theme').forEach(b=>b.classList.toggle('active',b===button));draw()}));addEventListener('keydown',e=>{keys[e.key]=true;if(['ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault()});addEventListener('keyup',e=>keys[e.key]=false);function move(e){let r=c.getBoundingClientRect(),p=e.clientX-r.left;p*=c.width/r.width;paddle.x=Math.max(0,Math.min(c.width-paddle.w,p-paddle.w/2));}c.addEventListener('pointermove',move);c.addEventListener('pointerdown',e=>{c.setPointerCapture?.(e.pointerId);move(e)});renderRankings([]);setup();draw();
 </script></body></html>
